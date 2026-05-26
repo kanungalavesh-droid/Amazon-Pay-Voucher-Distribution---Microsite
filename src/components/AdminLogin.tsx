@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Lock, Mail, ArrowRight, ShieldAlert } from 'lucide-react';
-import { auth } from '../firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { auth, googleProvider } from '../firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
 
 interface AdminLoginProps {
   onLogin: (token: string) => void;
@@ -13,6 +13,20 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setError('');
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const token = await result.user.getIdToken();
+      onLogin(token);
+    } catch (err: any) {
+      setError(err.message || 'Google Sign-In failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,7 +54,11 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
       const token = await userCredential.user.getIdToken();
       onLogin(token);
     } catch (err: any) {
-      setError(err.message || 'Authentication failed. Incorrect credentials.');
+      if (err.code === 'auth/operation-not-allowed') {
+         setError("Email/Password Authentication is not enabled. Please go to your Firebase Console > Authentication > Sign-in method, edit 'Email/Password' and enable it, then try again.");
+      } else {
+         setError(err.message || 'Authentication failed. Incorrect credentials.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -80,6 +98,28 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
                 <p className="text-sm text-red-400">{error}</p>
               </div>
             )}
+            
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={isLoading}
+              className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-slate-700 hover:border-slate-600 rounded-xl shadow-sm text-sm font-bold text-white bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 focus:ring-offset-slate-900 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? (
+                <div className="w-5 h-5 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
+              ) : (
+                <>Sign in with Google <ArrowRight className="w-4 h-4 ml-2" /></>
+              )}
+            </button>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-800" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-slate-900 text-slate-500">Or continue with email</span>
+              </div>
+            </div>
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-300">
@@ -134,7 +174,7 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
                 {isLoading ? (
                   <div className="w-5 h-5 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
                 ) : (
-                  <>Sign In <ArrowRight className="w-4 h-4" /></>
+                  <>Sign In <ArrowRight className="w-4 h-4 ml-2" /></>
                 )}
               </button>
             </div>

@@ -27,7 +27,7 @@ export function AdminDashboard() {
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
       // Check if logged in user is admin
-      if (user && user.email === 'Amazonpay2026@gmail.com') {
+      if (user && (user.email?.toLowerCase() === 'amazonpay2026@gmail.com' || user.email?.toLowerCase() === 'kanunga.lavesh@gmail.com')) {
         setIsAuthenticated(true);
       } else {
         setIsAuthenticated(false);

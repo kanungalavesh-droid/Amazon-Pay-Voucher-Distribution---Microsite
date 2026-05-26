@@ -6,7 +6,7 @@ service cloud.firestore {
     }
     
     function isAdmin() {
-      return request.auth != null && (request.auth.token.email == "Amazonpay2026@gmail.com" || request.auth.token.email == "kanunga.lavesh@gmail.com");
+      return request.auth != null && (request.auth.token.email.lower() == "amazonpay2026@gmail.com" || request.auth.token.email.lower() == "kanunga.lavesh@gmail.com");
     }
 
     match /stats/{docId} {

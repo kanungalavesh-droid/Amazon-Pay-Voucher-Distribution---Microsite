@@ -7,9 +7,9 @@ import { db } from '../firebase';
 import { collection, query, where, limit, getDocs, doc, updateDoc, runTransaction, onSnapshot } from 'firebase/firestore';
 
 const CARDS = [
-  { id: 1, image: "https://i.ibb.co/tpCX1LKf/Chat-GPT-Image-May-27-2026-12-17-10-AM.png" },
-  { id: 2, image: "https://i.ibb.co/gLMcK8dX/Chat-GPT-Image-May-27-2026-12-17-15-AM.png" },
-  { id: 3, image: "https://i.ibb.co/Vp9qB2QN/Chat-GPT-Image-May-27-2026-12-17-30-AM.png" }
+  { id: 1, image: "https://i.ibb.co/45MzCyB/Chat-GPT-Image-May-27-2026-12-17-10-AM.webp" },
+  { id: 2, image: "https://i.ibb.co/qLws8ZKw/Chat-GPT-Image-May-27-2026-12-17-15-AM.webp" },
+  { id: 3, image: "https://i.ibb.co/nNbGSXPq/Chat-GPT-Image-May-27-2026-12-17-30-AM.webp" }
 ];
 
 function InteractiveCardDeck() {
