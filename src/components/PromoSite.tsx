@@ -95,9 +95,15 @@ export function PromoSite() {
     
     // Fetch live stats
     fetch('/api/stats')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('API not available, fallback to local');
+        return res.json();
+      })
       .then(data => setAvailableCount(data.available))
-      .catch(console.error);
+      .catch((err) => {
+        console.warn('Running without backend, using simulated stats', err);
+        setAvailableCount(150);
+      });
   }, []);
 
   const handleClaimClick = async () => {
@@ -105,18 +111,47 @@ export function PromoSite() {
     setError(null);
     
     try {
-      const devId = localStorage.getItem('amz_promo_device_id');
-      const res = await fetch('/api/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: devId })
-      });
+      const devId = localStorage.getItem('amz_promo_device_id')!;
+      let code = "";
+
+      try {
+        const res = await fetch('/api/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: devId })
+        });
+        
+        const data = await res.json();
+        
+        if (!res.ok) throw new Error(data.error || 'Failed to secure voucher.');
+        code = data.code;
+      } catch (err: any) {
+         // Fallback for static hosting (GitHub Pages) where the backend doesn't exist
+         if (err.message.includes('Unexpected token') || err.message.includes('API not available') || err.message === 'Failed to fetch' || err.name === 'SyntaxError') {
+             console.warn("Backend unavailable, using local simulation for GitHub pages.");
+             
+             // Simulate local freeze period
+             const lastClaimTime = localStorage.getItem('amz_last_claim_time');
+             if (lastClaimTime) {
+                const timeSinceLastClaimMs = Date.now() - parseInt(lastClaimTime);
+                const freezePeriodMs = 6 * 60 * 60 * 1000; // 6 hours
+                
+                if (timeSinceLastClaimMs < freezePeriodMs) {
+                   const remainingHours = Math.ceil((freezePeriodMs - timeSinceLastClaimMs) / (1000 * 60 * 60));
+                   throw new Error(`You have already claimed a reward recently. Please wait ${remainingHours} hours before claiming another.`);
+                }
+             }
+
+             await new Promise(r => setTimeout(r, 1000)); // Simulate delay
+             localStorage.setItem('amz_last_claim_time', Date.now().toString());
+             code = `AMZ-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+             setAvailableCount(prev => prev ? prev - 1 : prev);
+         } else {
+             throw err; // Real backend error from Express (e.g. 429 Too Many Requests)
+         }
+      }
       
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error || 'Failed to secure voucher.');
-      
-      setVoucherCode(data.code);
+      setVoucherCode(code);
     } catch (err: any) {
       setError(err.message);
     } finally {
