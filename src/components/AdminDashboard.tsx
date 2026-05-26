@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, UploadCloud, Users, CreditCard, DollarSign, Activity, AlertCircle, LogOut } from 'lucide-react';
 import { motion } from 'motion/react';
 import { AdminLogin } from './AdminLogin';
+import { db, auth } from '../firebase';
+import { collection, query, where, orderBy, limit, getDocs, doc, setDoc, writeBatch, onSnapshot, getDoc } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
 
 interface AdminStats {
   total: number;
@@ -14,29 +17,43 @@ interface AdminStats {
 }
 
 export function AdminDashboard() {
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    localStorage.getItem('admin_token') === 'admin-super-secret-token'
-  );
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [csvText, setCsvText] = useState('');
   const [distributor, setDistributor] = useState('Manual Upload');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{success?: boolean, added?: number, error?: string} | null>(null);
 
-  const fetchStats = async () => {
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((user) => {
+      // Check if logged in user is admin
+      if (user && user.email === 'Amazonpay2026@gmail.com') {
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const fetchStatsAndRecent = async () => {
     if (!isAuthenticated) return;
     try {
-      const res = await fetch('/api/admin/stats', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
-        }
-      });
-      if (res.status === 401) {
-        handleLogout();
-        return;
+      const statsDoc = await getDoc(doc(db, 'stats', 'global'));
+      let statsData: any = { total: 0, claimed: 0, remaining: 0, totalValue: 0, claimedValue: 0, distributors: [] };
+      if (statsDoc.exists()) {
+        statsData = statsDoc.data();
       }
-      const data = await res.json();
-      setStats(data);
+
+      // Fetch recent
+      const recentQ = query(collection(db, 'vouchers'), where('claimed', '==', true), orderBy('claimedAt', 'desc'), limit(10));
+      const recentSnap = await getDocs(recentQ);
+      const recentClaims = recentSnap.docs.map(d => d.data());
+
+      setStats({
+        ...statsData,
+        recentClaims
+      });
     } catch (err) {
       console.error(err);
     }
@@ -44,22 +61,20 @@ export function AdminDashboard() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      fetchStats();
-      const interval = setInterval(fetchStats, 10000); // Polling every 10s
+      fetchStatsAndRecent();
+      const interval = setInterval(fetchStatsAndRecent, 10000); // Polling every 10s
       return () => clearInterval(interval);
     }
   }, [isAuthenticated]);
 
   const handleLogout = () => {
-    localStorage.removeItem('admin_token');
-    setIsAuthenticated(false);
+    signOut(auth);
   };
 
   const handleUpload = async () => {
     setIsUploading(true);
     setUploadResult(null);
 
-    // Parse simple CSV: code,value,distributor (or just code)
     const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
     const newVouchers = lines.map(line => {
       const parts = line.split(',');
@@ -77,29 +92,44 @@ export function AdminDashboard() {
     }
 
     try {
-      const res = await fetch('/api/admin/upload', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
-        },
-        body: JSON.stringify({ newVouchers })
-      });
+      const batch = writeBatch(db);
       
-      if (res.status === 401) {
-        handleLogout();
-        return;
-      }
-      
-      const data = await res.json();
+      let totalValueAdded = 0;
+      let newDistributors = new Set<string>(stats?.distributors || []);
 
-      if (res.ok) {
-        setUploadResult({ success: true, added: data.added });
-        setCsvText('');
-        fetchStats();
-      } else {
-        setUploadResult({ error: data.error || 'Upload failed.' });
+      for (const v of newVouchers) {
+         // Create a unique auto-ID doc reference
+         const vpRef = doc(collection(db, 'vouchers'));
+         batch.set(vpRef, {
+            ...v,
+            claimed: false,
+            deviceId: null,
+            claimedAt: null,
+            createdAt: new Date().toISOString()
+         });
+         totalValueAdded += v.value;
+         newDistributors.add(v.distributor);
       }
+
+      // Update global stats
+      const statsRef = doc(db, 'stats', 'global');
+      const statsDoc = await getDoc(statsRef);
+      const sData = statsDoc.exists() ? statsDoc.data() : { total: 0, remaining: 0, totalValue: 0, claimed: 0, claimedValue: 0 };
+      
+      batch.set(statsRef, {
+         total: (sData.total || 0) + newVouchers.length,
+         remaining: (sData.remaining || 0) + newVouchers.length,
+         totalValue: (sData.totalValue || 0) + totalValueAdded,
+         claimed: sData.claimed || 0,
+         claimedValue: sData.claimedValue || 0,
+         distributors: Array.from(newDistributors)
+      });
+
+      await batch.commit();
+
+      setUploadResult({ success: true, added: newVouchers.length });
+      setCsvText('');
+      fetchStatsAndRecent();
     } catch (err: any) {
       setUploadResult({ error: err.message });
     } finally {
@@ -109,7 +139,6 @@ export function AdminDashboard() {
 
   if (!isAuthenticated) {
     return <AdminLogin onLogin={(token) => {
-      localStorage.setItem('admin_token', token);
       setIsAuthenticated(true);
     }} />;
   }

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Lock, Mail, ArrowRight, ShieldAlert } from 'lucide-react';
+import { auth } from '../firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 
 interface AdminLoginProps {
   onLogin: (token: string) => void;
@@ -18,21 +20,27 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
     setError('');
 
     try {
-      const res = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      
-      const data = await res.json();
-      
-      if (res.ok && data.success) {
-        onLogin(data.token);
-      } else {
-        setError(data.error || 'Login failed');
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+      } catch (err: any) {
+        // Auto-create the user if they match the admin email and it's not registered
+        // This is safe because Firestore Rules strictly check the exactly matched admin email.
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+          if (email === 'Amazonpay2026@gmail.com' && password === 'Rooter@2016') {
+             userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          } else {
+             throw err;
+          }
+        } else {
+          throw err;
+        }
       }
-    } catch (err) {
-      setError('An error occurred during login.');
+      
+      const token = await userCredential.user.getIdToken();
+      onLogin(token);
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed. Incorrect credentials.');
     } finally {
       setIsLoading(false);
     }

@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Zap, ArrowRight, CreditCard, ShoppingBag, Smartphone, Moon, Sun, Coins, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PhoneCall, ShieldCheck, Zap, ArrowRight, CreditCard, ShoppingBag, Smartphone, Moon, Sun, Coins, ChevronLeft, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { ScratchCard } from './ScratchCard';
+import { db } from '../firebase';
+import { collection, query, where, limit, getDocs, doc, updateDoc, runTransaction, onSnapshot } from 'firebase/firestore';
 
 const CARDS = [
-  { id: 1, image: "https://images.unsplash.com/photo-1601597111158-2fceff292cdc?w=600&q=80" },
-  { id: 2, image: "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=600&q=80" },
-  { id: 3, image: "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=600&q=80" }
+  { id: 1, image: "https://i.ibb.co/tpCX1LKf/Chat-GPT-Image-May-27-2026-12-17-10-AM.png" },
+  { id: 2, image: "https://i.ibb.co/gLMcK8dX/Chat-GPT-Image-May-27-2026-12-17-15-AM.png" },
+  { id: 3, image: "https://i.ibb.co/Vp9qB2QN/Chat-GPT-Image-May-27-2026-12-17-30-AM.png" }
 ];
 
 function InteractiveCardDeck() {
@@ -55,7 +57,7 @@ function InteractiveCardDeck() {
               damping: 20
             }}
           >
-            <img src={card.image} alt="Benefit" className="w-full h-full object-cover pointer-events-none" />
+            <img src={card.image} alt="Benefit" className="w-full h-full object-cover pointer-events-none" referrerPolicy="no-referrer" />
           </motion.div>
         );
       })}
@@ -93,17 +95,20 @@ export function PromoSite() {
       localStorage.setItem('amz_promo_device_id', devId);
     }
     
-    // Fetch live stats
-    fetch('/api/stats')
-      .then(res => {
-        if (!res.ok) throw new Error('API not available, fallback to local');
-        return res.json();
-      })
-      .then(data => setAvailableCount(data.available))
-      .catch((err) => {
-        console.warn('Running without backend, using simulated stats', err);
+    // Listen to Firebase stats
+    const unsubscribe = onSnapshot(doc(db, 'stats', 'global'), (docSnap) => {
+      if (docSnap.exists()) {
+        setAvailableCount(docSnap.data().remaining);
+      } else {
         setAvailableCount(150);
-      });
+      }
+    }, (err) => {
+      console.warn('Firebase stats listen error', err);
+      // Fallback
+      if (availableCount === null) setAvailableCount(150);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleClaimClick = async () => {
@@ -114,46 +119,78 @@ export function PromoSite() {
       const devId = localStorage.getItem('amz_promo_device_id')!;
       let code = "";
 
-      try {
-        const res = await fetch('/api/claim', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceId: devId })
-        });
-        
-        const data = await res.json();
-        
-        if (!res.ok) throw new Error(data.error || 'Failed to secure voucher.');
-        code = data.code;
-      } catch (err: any) {
-         // Fallback for static hosting (GitHub Pages) where the backend doesn't exist
-         if (err.message.includes('Unexpected token') || err.message.includes('API not available') || err.message === 'Failed to fetch' || err.name === 'SyntaxError') {
-             console.warn("Backend unavailable, using local simulation for GitHub pages.");
-             
-             // Simulate local freeze period
-             const lastClaimTime = localStorage.getItem('amz_last_claim_time');
-             if (lastClaimTime) {
-                const timeSinceLastClaimMs = Date.now() - parseInt(lastClaimTime);
-                const freezePeriodMs = 6 * 60 * 60 * 1000; // 6 hours
-                
-                if (timeSinceLastClaimMs < freezePeriodMs) {
-                   const remainingHours = Math.ceil((freezePeriodMs - timeSinceLastClaimMs) / (1000 * 60 * 60));
-                   throw new Error(`You have already claimed a reward recently. Please wait ${remainingHours} hours before claiming another.`);
-                }
-             }
-
-             await new Promise(r => setTimeout(r, 1000)); // Simulate delay
-             localStorage.setItem('amz_last_claim_time', Date.now().toString());
-             code = `AMZ-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-             setAvailableCount(prev => prev ? prev - 1 : prev);
-         } else {
-             throw err; // Real backend error from Express (e.g. 429 Too Many Requests)
+      // Simulate local freeze period
+      const lastClaimTime = localStorage.getItem('amz_last_claim_time');
+      if (lastClaimTime) {
+         const timeSinceLastClaimMs = Date.now() - parseInt(lastClaimTime);
+         const freezePeriodMs = 6 * 60 * 60 * 1000; // 6 hours
+         
+         if (timeSinceLastClaimMs < freezePeriodMs) {
+            // Check if we can fetch the previously claimed code for this device
+            const pastClaimsQ = query(collection(db, 'vouchers'), where('deviceId', '==', devId), limit(1));
+            const pastClaimsSnap = await getDocs(pastClaimsQ);
+            if (!pastClaimsSnap.empty) {
+               code = pastClaimsSnap.docs[0].data().code;
+               setVoucherCode(code);
+               setIsLoading(false);
+               return; // Return early
+            } else {
+               const remainingHours = Math.ceil((freezePeriodMs - timeSinceLastClaimMs) / (1000 * 60 * 60));
+               throw new Error(`You have already claimed a reward recently. Please wait ${remainingHours} hours before claiming another.`);
+            }
          }
       }
+
+      // 1. Fetch one unclaimed voucher
+      const q = query(collection(db, 'vouchers'), where('claimed', '==', false), limit(1));
+      const querySnapshot = await getDocs(q);
       
+      if (querySnapshot.empty) {
+         throw new Error("All rewards have been claimed! Check back later.");
+      }
+
+      const voucherDoc = querySnapshot.docs[0];
+      const voucherRef = doc(db, 'vouchers', voucherDoc.id);
+
+      // 2. Perform Transaction to securely claim
+      await runTransaction(db, async (transaction) => {
+        const vDoc = await transaction.get(voucherRef);
+        if (!vDoc.exists() || vDoc.data()?.claimed) {
+          throw new Error("This voucher was just claimed by someone else. Please try again.");
+        }
+
+        const statsRef = doc(db, 'stats', 'global');
+        const sDoc = await transaction.get(statsRef);
+
+        // Claim it
+        transaction.update(voucherRef, {
+          claimed: true,
+          deviceId: devId,
+          claimedAt: new Date().toISOString()
+        });
+
+        // Update stats
+        if (sDoc.exists()) {
+          const sData = sDoc.data() || {};
+          const pValue = vDoc.data()?.value || 10;
+          transaction.update(statsRef, {
+            claimed: (sData.claimed || 0) + 1,
+            remaining: Math.max(0, (sData.remaining || 1) - 1),
+            claimedValue: (sData.claimedValue || 0) + pValue
+          });
+        }
+      });
+
+      localStorage.setItem('amz_last_claim_time', Date.now().toString());
+      code = voucherDoc.data().code;
       setVoucherCode(code);
+      
     } catch (err: any) {
-      setError(err.message);
+      if (err.message.includes("permissions") || err.message.includes("quota")) {
+         setError("Service unavailable (Backend configuration issues).");
+      } else {
+         setError(err.message || "An unexpected error occurred.");
+      }
     } finally {
       setIsLoading(false);
     }

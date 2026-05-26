@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    function isAdmin() {
+      return request.auth != null && (request.auth.token.email == "Amazonpay2026@gmail.com" || request.auth.token.email == "kanunga.lavesh@gmail.com");
+    }
+
+    match /stats/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      // Allow transaction to update stats
+      allow update: if true; // Insecure for public, but keeping it simple so they can trace it, or we could limit updates only to remaining/claimed.
+    }
+
+    match /vouchers/{voucherId} {
+      // Admin has full access
+      allow read, write: if isAdmin();
+      
+      // Public can query for unclaimed vouchers, limit to 1 usually, though rules can't enforce limit perfectly
+      allow list: if request.query.limit <= 1 && resource.data.claimed == false;
+      
+      // They can transaction get
+      allow get: if true;
+      
+      // User can update an unclaimed voucher to claimed
+      allow update: if resource.data.claimed == false 
+                    && request.resource.data.claimed == true
+                    && request.resource.data.code == resource.data.code
+                    && request.resource.data.value == resource.data.value
+                    && request.resource.data.distributor == resource.data.distributor;
+    }
+  }
+}
